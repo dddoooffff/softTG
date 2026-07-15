@@ -1,0 +1,13 @@
+{
+  "accounts": [],
+  "chats": [],
+  "message": "\u0427\u0430\u0442\u0438\u043a https://t.me/piarvzzzz \u0432\u0437",
+  "protection": {
+    "delay_min": 8,
+    "delay_max": 18,
+    "max_per_hour": 30,
+    "max_per_day": 100,
+    "batch_size": 5,
+    "batch_pause": 120
+  }
+}
