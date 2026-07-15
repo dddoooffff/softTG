@@ -11,7 +11,6 @@ from telethon.errors import FloodWaitError, RPCError
 # ==================== КОНФИГУРАЦИЯ ====================
 CONFIG_FILE = 'config.json'
 
-# Загружаем конфиг или создаём новый
 def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f:
@@ -73,7 +72,9 @@ class AntiBanProtection:
         return random.choice(variants)
     
     def shuffle_chats(self, chats_list):
-        shuffled = chats_list.copy()
+        if not chats_list:
+            return []
+        shuffled = list(chats_list)
         random.shuffle(shuffled)
         return shuffled
 
@@ -82,7 +83,6 @@ protection = AntiBanProtection(config)
 # ==================== ВЕБ-СЕРВЕР ====================
 app = Flask(__name__)
 
-# HTML шаблон для веб-панели (встроен прямо в код)
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
@@ -127,7 +127,6 @@ HTML_TEMPLATE = '''
             <p>Последний запуск: <strong>{{ config.last_run }}</strong></p>
         </div>
 
-        <!-- API Настройки -->
         <div class="card">
             <h2>🔑 API Настройки</h2>
             <form method="post" action="/update_api">
@@ -140,7 +139,6 @@ HTML_TEMPLATE = '''
         </div>
 
         <div class="flex">
-            <!-- Аккаунты -->
             <div class="card">
                 <h2>👤 Аккаунты</h2>
                 <form method="post" action="/add_account">
@@ -164,7 +162,6 @@ HTML_TEMPLATE = '''
                 </table>
             </div>
 
-            <!-- Чаты -->
             <div class="card">
                 <h2>📢 Чаты</h2>
                 <form method="post" action="/add_chat">
@@ -190,7 +187,6 @@ HTML_TEMPLATE = '''
             </div>
         </div>
 
-        <!-- Сообщение и настройки -->
         <div class="card">
             <h2>✏️ Сообщение</h2>
             <form method="post" action="/update_message">
@@ -228,7 +224,6 @@ HTML_TEMPLATE = '''
             </form>
         </div>
 
-        <!-- Управление -->
         <div class="card">
             <h2>🚀 Управление</h2>
             <div class="flex">
@@ -241,7 +236,6 @@ HTML_TEMPLATE = '''
             </div>
         </div>
 
-        <!-- Логи -->
         <div class="card">
             <h2>📝 Логи</h2>
             <div class="log-box" id="logBox">{{ log }}</div>
@@ -254,24 +248,24 @@ HTML_TEMPLATE = '''
 </html>
 '''
 
-# Хранилище логов
 logs = []
 is_sending = False
 
 def add_log(text):
     timestamp = datetime.now().strftime("%H:%M:%S")
     logs.append(f"[{timestamp}] {text}")
+    if len(logs) > 500:
+        logs.pop(0)
 
-# ==================== ВЕБ-МАРШРУТЫ ====================
 @app.route('/')
 def index():
-    log_text = '\n'.join(logs[-100:])  # последние 100 строк
+    log_text = '\n'.join(logs[-100:])
     return render_template_string(HTML_TEMPLATE, config=config, log=log_text)
 
 @app.route('/update_api', methods=['POST'])
 def update_api():
-    config['api_id'] = request.form.get('api_id', '')
-    config['api_hash'] = request.form.get('api_hash', '')
+    config['api_id'] = request.form.get('api_id', '').strip()
+    config['api_hash'] = request.form.get('api_hash', '').strip()
     save_config(config)
     add_log(f"✅ API обновлён")
     return redirect('/')
@@ -298,20 +292,29 @@ def add_chat():
     try:
         chat_id = int(request.form.get('chat_id', ''))
         title = request.form.get('chat_title', '').strip()
-        if chat_id and title and not any(c['id'] == chat_id for c in config['chats']):
-            config['chats'].append({'id': chat_id, 'title': title})
-            save_config(config)
-            add_log(f"✅ Добавлен чат: {title} (ID: {chat_id})")
-    except:
-        add_log(f"❌ Ошибка: неверный ID чата")
+        if chat_id and title:
+            # Проверяем, нет ли уже такого чата
+            if not any(c['id'] == chat_id for c in config['chats']):
+                config['chats'].append({'id': chat_id, 'title': title})
+                save_config(config)
+                add_log(f"✅ Добавлен чат: {title} (ID: {chat_id})")
+            else:
+                add_log(f"⚠️ Чат с ID {chat_id} уже существует")
+    except ValueError:
+        add_log(f"❌ Ошибка: неверный ID чата (должно быть число)")
+    except Exception as e:
+        add_log(f"❌ Ошибка: {e}")
     return redirect('/')
 
 @app.route('/delete_chat', methods=['POST'])
 def delete_chat():
-    chat_id = int(request.form.get('chat_id', 0))
-    config['chats'] = [c for c in config['chats'] if c['id'] != chat_id]
-    save_config(config)
-    add_log(f"🗑 Удалён чат")
+    try:
+        chat_id = int(request.form.get('chat_id', 0))
+        config['chats'] = [c for c in config['chats'] if c['id'] != chat_id]
+        save_config(config)
+        add_log(f"🗑 Удалён чат с ID: {chat_id}")
+    except:
+        pass
     return redirect('/')
 
 @app.route('/update_message', methods=['POST'])
@@ -323,19 +326,23 @@ def update_message():
 
 @app.route('/update_protection', methods=['POST'])
 def update_protection():
-    config['protection']['delay_min'] = int(request.form.get('delay_min', 8))
-    config['protection']['delay_max'] = int(request.form.get('delay_max', 18))
-    config['protection']['max_per_hour'] = int(request.form.get('max_per_hour', 30))
-    config['protection']['batch_size'] = int(request.form.get('batch_size', 5))
-    config['protection']['batch_pause'] = int(request.form.get('batch_pause', 120))
-    save_config(config)
-    # Обновляем объект защиты
-    protection.delay_min = config['protection']['delay_min']
-    protection.delay_max = config['protection']['delay_max']
-    protection.max_per_hour = config['protection']['max_per_hour']
-    protection.batch_size = config['protection']['batch_size']
-    protection.batch_pause = config['protection']['batch_pause']
-    add_log(f"✅ Настройки защиты обновлены")
+    try:
+        config['protection']['delay_min'] = int(request.form.get('delay_min', 8))
+        config['protection']['delay_max'] = int(request.form.get('delay_max', 18))
+        config['protection']['max_per_hour'] = int(request.form.get('max_per_hour', 30))
+        config['protection']['batch_size'] = int(request.form.get('batch_size', 5))
+        config['protection']['batch_pause'] = int(request.form.get('batch_pause', 120))
+        save_config(config)
+        
+        protection.delay_min = config['protection']['delay_min']
+        protection.delay_max = config['protection']['delay_max']
+        protection.max_per_hour = config['protection']['max_per_hour']
+        protection.batch_size = config['protection']['batch_size']
+        protection.batch_pause = config['protection']['batch_pause']
+        
+        add_log(f"✅ Настройки защиты обновлены")
+    except:
+        add_log(f"❌ Ошибка при сохранении настроек")
     return redirect('/')
 
 @app.route('/clear_logs', methods=['POST'])
@@ -351,8 +358,8 @@ def start_sending():
         add_log("⚠️ Рассылка уже запущена")
         return redirect('/')
     
-    # Запускаем в отдельном потоке
     thread = threading.Thread(target=run_sending)
+    thread.daemon = True
     thread.start()
     add_log("🚀 Запущена рассылка!")
     return redirect('/')
@@ -370,7 +377,6 @@ def run_sending():
     is_sending = True
     
     try:
-        # Создаём новый event loop для потока
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(send_messages())
@@ -407,13 +413,13 @@ async def send_messages():
         
         add_log(f"🔹 Аккаунт: {acc['name']}")
         
-        client = TelegramClient(
-            acc['session'],
-            int(config['api_id']),
-            config['api_hash']
-        )
-        
         try:
+            client = TelegramClient(
+                acc['session'],
+                int(config['api_id']),
+                config['api_hash']
+            )
+            
             await client.start()
             me = await client.get_me()
             add_log(f"✅ Вошли как: {me.first_name} (ID: {me.id})")
@@ -421,12 +427,12 @@ async def send_messages():
             shuffled_chats = protection.shuffle_chats(config['chats'])
             sent_this_session = 0
             
-            for chat in shuffled_chats[:protection.max_per_hour]:
+            for chat in shuffled_chats:
                 if not is_sending:
                     break
                 
-                if not protection.check_limits(acc['name']):
-                    add_log(f"⏳ Лимит для {acc['name']} достигнут")
+                if sent_this_session >= protection.max_per_hour:
+                    add_log(f"⏳ Достигнут лимит {protection.max_per_hour} для {acc['name']}")
                     break
                 
                 try:
@@ -434,9 +440,6 @@ async def send_messages():
                         chat['id'],
                         protection.rotate_message(config['message'])
                     )
-                    
-                    protection.sent_count[acc['name']] = \
-                        protection.sent_count.get(acc['name'], 0) + 1
                     
                     sent_this_session += 1
                     total_sent += 1
@@ -446,10 +449,10 @@ async def send_messages():
                     await asyncio.sleep(delay)
                     
                 except FloodWaitError as e:
-                    add_log(f"⚠️ FloodWait {e.seconds} сек")
+                    add_log(f"⚠️ FloodWait на {e.seconds} сек")
                     await asyncio.sleep(e.seconds + 10)
                 except Exception as e:
-                    add_log(f"❌ Ошибка: {e}")
+                    add_log(f"❌ Ошибка отправки: {e}")
             
             await client.disconnect()
             add_log(f"✅ Аккаунт {acc['name']} завершил (отправлено: {sent_this_session})")
@@ -459,7 +462,7 @@ async def send_messages():
     
     add_log(f"🎉 ГОТОВО! Отправлено {total_sent} сообщений")
 
-# ==================== ЗАПУСК ВЕБ-СЕРВЕРА ====================
+# ==================== ЗАПУСК ====================
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 10000))
     add_log("🔄 Запуск веб-сервера...")
